@@ -1,0 +1,21 @@
+#The Environment
+.venv/
+.github/
+archive/
+__pycache__/
+.vscode/
+solver/
+*.egg-info/
+
+#The Data
+data/raw/
+data/processed/
+*.db
+*.csv
+*.txt
+*.xlsx
+
+#Exceptions
+!data/reports/
+!requirements.txt
+!environment.yml

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "M8_RL"
+version = "0.1.0"
+description = "A physics-constrained Reinforcement Learning environment for hydropower dispatch."
+requires-python = ">=3.11"
+# Dependencies omitted for pip.
+# The mathematical engine (numpy, scipy, pymc) and RL environment (gymnasium, stable-baselines3) MUST be managed
+# strictly via Conda (conda-forge) to ensure C-compiler stability.
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["environments*", "training*"]

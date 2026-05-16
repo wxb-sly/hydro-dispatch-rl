@@ -1,0 +1,27 @@
+name: infra_rl
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # (Pinned to 3.11 for RL stability)
+  - python=3.11
+
+  - numpy
+  - pandas
+  - scipy
+
+  - matplotlib
+  - seaborn
+  - plotly
+
+  - jupyter
+  - tqdm
+
+  - pytorch
+  - tensorboard
+  - gymnasium
+  - stable-baselines3
+
+  - pip
+  - pip:
+    - -e .
