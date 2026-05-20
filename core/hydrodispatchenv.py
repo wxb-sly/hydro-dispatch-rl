@@ -91,15 +91,62 @@ class HydroDispatchEnv(gym.Env):
 
 
     # manually defining .step(action)
-    def step(self, action): # placehoder for now
+    def step(self, action):
+        """
+        execute one hourly time step
+        Volume(t+1) = Volume(t) + Inflow - Discharge - Spill
+        """
+
+        discharge_m3s = np.clip(action[0], self.TURBINE_Q_MIN, self.TURBINE_Q_MAX)
+
+        inflow_vol = self.inflow_m3s * self.DT_SECONDS
+
+        available_volume =  self.volume_m3- self.RESERVOIR_MIN_M3 #type: ignore
+
+        max_discharge_volume =  available_volume
+
+        discharge_volume = min(discharge_m3s * self.DT_SECONDS, max_discharge_volume)
+        discharge_volume = max(discharge_volume, 0.0)
+
+        actual_discharge_m3s = discharge_volume / self.DT_SECONDS
+
+        self.volume_m3 +=inflow_vol - discharge_volume #type:ignore
+
+        spill_volume = 0.0
+        if self.volume_m3 > self.RESERVOIR_MAX_M3:
+            spill_volume = self.volume_m3-self.RESERVOIR_MAX_M3
+            self.volume_m3 = self.RESERVOIR_MAX_M3
+
+        self.volume_m3 = max(self.volume_m3, self.RESERVOIR_MIN_M3)
+
+        power_watts = (self.RHO * self.G * actual_discharge_m3s * self.HEAD_NOMINAL * self.EFFICIENCY)
+
+        power_mw = power_watts /1_000_000
+
+        reward = power_mw
+        # for now no tarrifs just yet
+
+        spill_m3s = spill_volume /self.DT_SECONDS
+
+        if spill_m3s >0.0:
+            reward -= spill_m3s * 0.1
+
+
+
 
         self.current_step+=1 # type: ignore
         terminated = self.current_step >=self.HOURS_PER_EPISODE
         truncated= False
 
         observation = self._get_obs()
-        reward = 0.0
-        info = self._get_info
+        info = self._get_info()
+
+        info.update({
+            "actual_discharge_m3s": actual_discharge_m3s,
+            "requested_discharge_m3s": float(action[0]),
+            "power_mw": power_mw,
+            "spill_m3s": spill_m3s,
+        })
 
         return observation, reward, terminated, truncated, info
 
