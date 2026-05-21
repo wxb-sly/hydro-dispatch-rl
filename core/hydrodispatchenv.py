@@ -24,6 +24,15 @@ class HydroDispatchEnv(gym.Env):
     HOURS_PER_EPISODE = 24 * 7
     DT_SECONDS = 3600
 
+    #reward/eco
+    ## $/MWh
+
+    TARIFF_SCHEDULE = {
+        "off_peak": 50.0,     #(22:00 - 06:00)
+        "shoulder": 80.0,    #(06:00 - 10:00, 16:00 - 22:00)
+        "peak":     120.0,   #(10:00 - 16:00)
+    }
+
 
     def __init__(self, inflow_m3s: float=25.0): # constant for now
         super().__init__() # inherit all attributes from gym.env
@@ -31,10 +40,10 @@ class HydroDispatchEnv(gym.Env):
 
         self.action_space = spaces.Box(low = np.array([self.TURBINE_Q_MIN], dtype = np.float32), high = np.array([self.TURBINE_Q_MAX], dtype = np.float32), dtype = np.float32)
 
-    # [reservoir level, hour of the day, inflow] ~ normalized to 0 and 1
+    # [reservoir level, hour of the day, inflow, current tarif] ~ normalized to 0 and 1
         self.observation_space = spaces.Box(
-            low = np.array([0, 0 , 0], dtype =np.float32),
-            high = np.array([1, 1, 1], dtype = np.float32),
+            low = np.array([0, 0 , 0, 0], dtype =np.float32),
+            high = np.array([1, 1, 1, 1], dtype = np.float32),
             dtype = np.float32,
         )
 
@@ -75,7 +84,10 @@ class HydroDispatchEnv(gym.Env):
 
         inflow_norm = np.clip(self.inflow_m3s / self.TURBINE_Q_MAX, 0.0, 1.0)
 
-        return np.array([level_norm, hour_of_day, inflow_norm], dtype= np.float32)
+        tariff_norm = self._get_tariff(self.current_step % 24) / self.TARIFF_SCHEDULE["peak"] # type:ignore
+
+
+        return np.array([level_norm, hour_of_day, inflow_norm, tariff_norm], dtype=np.float32)
 
 
     def _get_info(self) -> dict:
@@ -123,15 +135,26 @@ class HydroDispatchEnv(gym.Env):
 
         power_mw = power_watts /1_000_000
 
-        reward = power_mw
-        # for now no tarrifs just yet
+        hour_of_day = (self.current_step -1) % 24 # type:ignore
+
+        tariff = self._get_tariff(hour_of_day)
+        revenue = power_mw * tariff * 1 # 1 hour duration
+
+        reward=revenue
+
 
         spill_m3s = spill_volume /self.DT_SECONDS
 
         if spill_m3s >0.0:
-            reward -= spill_m3s * 0.1
+            wasted_power = (self.RHO *self.G *spill_m3s * self.HEAD_NOMINAL * self.EFFICIENCY) / 1_000_000
 
+            reward-=wasted_power * self.TARIFF_SCHEDULE["peak"]
 
+        # also penalize if agent request more than physically possible
+
+        requested_q= float(action[0])
+        if requested_q > actual_discharge_m3s + 0.1:
+            reward-=10
 
 
         self.current_step+=1 # type: ignore
@@ -150,3 +173,11 @@ class HydroDispatchEnv(gym.Env):
 
         return observation, reward, terminated, truncated, info
 
+    def _get_tariff(self, hour: int) -> float:
+        """return the electricity tariff ($/MWh) for a given hour of day"""
+        if 22 <= hour or hour < 6:
+            return self.TARIFF_SCHEDULE["off_peak"]
+        elif 10 <= hour < 16:
+            return self.TARIFF_SCHEDULE["peak"]
+        else:
+            return self.TARIFF_SCHEDULE["shoulder"]
