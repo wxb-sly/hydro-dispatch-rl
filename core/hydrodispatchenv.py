@@ -12,7 +12,7 @@ class HydroDispatchEnv(gym.Env):
     RESERVOIR_MIN_M3 = 500_000        # Dead storage
     TURBINE_Q_MAX = 50.0
     TURBINE_Q_MIN = 0.0               # can shut down
-    HEAD_NOMINAL = 100.0              # simplified, net
+    HEAD_MIN = 30.0              # net
     EFFICIENCY = 0.85                 # overall
     RHO = 1000.0                      # Water density (kg/m³)
     G = 9.81                          # m/s2
@@ -84,7 +84,8 @@ class HydroDispatchEnv(gym.Env):
 
         inflow_norm = np.clip(self.inflow_m3s / self.TURBINE_Q_MAX, 0.0, 1.0)
 
-        tariff_norm = self._get_tariff(self.current_step % 24) / self.TARIFF_SCHEDULE["peak"] # type:ignore
+        tariff_norm = self._get_tariff_dynamic(self.current_step % 24) / self.TARIFF_SCHEDULE["peak"] # type:ignore
+
 
 
         return np.array([level_norm, hour_of_day, inflow_norm, tariff_norm], dtype=np.float32)
@@ -98,6 +99,7 @@ class HydroDispatchEnv(gym.Env):
             "volume_m3": self.volume_m3,
             "step": self.current_step,
             "hour_of_day": self.current_step % 24, # type: ignore
+
 
         }
 
@@ -122,7 +124,13 @@ class HydroDispatchEnv(gym.Env):
 
         actual_discharge_m3s = discharge_volume / self.DT_SECONDS
 
-        self.volume_m3 +=inflow_vol - discharge_volume #type:ignore
+        EVAP_RATE_M_PER_HOUR = 0.005 / 24  # 5mm/day → m/hour
+        surface_area_m2 = (self.volume_m3 ** (2/3)) * 10  # Rough scaling #type:ignore
+        evap_volume = EVAP_RATE_M_PER_HOUR * surface_area_m2
+
+        self.volume_m3 +=inflow_vol - discharge_volume - evap_volume #type:ignore
+
+        # evap losses are non trivial, including it trains agent for passive losses
 
         spill_volume = 0.0
         if self.volume_m3 > self.RESERVOIR_MAX_M3:
@@ -131,13 +139,18 @@ class HydroDispatchEnv(gym.Env):
 
         self.volume_m3 = max(self.volume_m3, self.RESERVOIR_MIN_M3)
 
-        power_watts = (self.RHO * self.G * actual_discharge_m3s * self.HEAD_NOMINAL * self.EFFICIENCY)
+
+        level_fraction = (self.volume_m3 - self.RESERVOIR_MIN_M3) / (self.RESERVOIR_MAX_M3 - self.RESERVOIR_MIN_M3)
+        level_fraction = np.clip(level_fraction, 0.0, 1.0)
+        effective_head = self.HEAD_MIN + level_fraction * 70.0 #(30 to 70)
+
+        power_watts = (self.RHO * self.G * actual_discharge_m3s * effective_head * self.EFFICIENCY)
 
         power_mw = power_watts /1_000_000
 
         hour_of_day = (self.current_step -1) % 24 # type:ignore
 
-        tariff = self._get_tariff(hour_of_day)
+        tariff = self._get_tariff_dynamic(hour_of_day)
         revenue = power_mw * tariff * 1 # 1 hour duration
 
         reward=revenue
@@ -146,7 +159,7 @@ class HydroDispatchEnv(gym.Env):
         spill_m3s = spill_volume /self.DT_SECONDS
 
         if spill_m3s >0.0:
-            wasted_power = (self.RHO *self.G *spill_m3s * self.HEAD_NOMINAL * self.EFFICIENCY) / 1_000_000
+            wasted_power = (self.RHO *self.G *spill_m3s * effective_head * self.EFFICIENCY) / 1_000_000
 
             reward-=wasted_power * self.TARIFF_SCHEDULE["peak"]
 
@@ -169,9 +182,11 @@ class HydroDispatchEnv(gym.Env):
             "requested_discharge_m3s": float(action[0]),
             "power_mw": power_mw,
             "spill_m3s": spill_m3s,
+            "evap_volume": evap_volume,
         })
 
         return observation, reward, terminated, truncated, info
+
 
     def _get_tariff(self, hour: int) -> float:
         """return the electricity tariff ($/MWh) for a given hour of day"""
@@ -181,3 +196,11 @@ class HydroDispatchEnv(gym.Env):
             return self.TARIFF_SCHEDULE["peak"]
         else:
             return self.TARIFF_SCHEDULE["shoulder"]
+
+
+    def _get_tariff_dynamic(self, hour):
+        """volatile pricing with random noise."""
+        base = self._get_tariff(hour)
+        noise = self.np_random.normal(0, base * 0.15)  # 15% volatility
+        return max(base + noise, 10.0)
+
