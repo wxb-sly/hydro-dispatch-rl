@@ -40,10 +40,10 @@ class HydroDispatchEnv(gym.Env):
 
         self.action_space = spaces.Box(low = np.array([self.TURBINE_Q_MIN], dtype = np.float32), high = np.array([self.TURBINE_Q_MAX], dtype = np.float32), dtype = np.float32)
 
-    # [reservoir level, hour of the day, inflow, current tarif] ~ normalized to 0 and 1
+    # [reservoir level, hour of the day, inflow, current tarif]
         self.observation_space = spaces.Box(
-            low = np.array([0, 0 , 0, 0], dtype =np.float32),
-            high = np.array([1, 1, 1, 1], dtype = np.float32),
+            low = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            high = np.array([1.0, 1.0, 1.0, 5.0], dtype=np.float32), # Tariff can exceed 1.0 due to volatility
             dtype = np.float32,
         )
 
@@ -158,16 +158,21 @@ class HydroDispatchEnv(gym.Env):
 
         spill_m3s = spill_volume /self.DT_SECONDS
 
-        if spill_m3s >0.0:
-            wasted_power = (self.RHO *self.G *spill_m3s * effective_head * self.EFFICIENCY) / 1_000_000
-
-            reward-=wasted_power * self.TARIFF_SCHEDULE["peak"]
+        if spill_m3s > 0.0:
+            # Only penalize if the agent was negligent (hoarding water while spilling).
+            # If they are already running turbines > 95% capacity, they did all they could.
+            agent_requested_q = float(action[0])
+            if agent_requested_q < (self.TURBINE_Q_MAX * 0.95):
+                # Calculate the volume they COULD have turbined but didn't
+                missed_q = min(self.TURBINE_Q_MAX - agent_requested_q, spill_m3s)
+                wasted_power = (self.RHO * self.G * missed_q * effective_head * self.EFFICIENCY) / 1_000_000
+                reward -= wasted_power * self.TARIFF_SCHEDULE["peak"]
 
         # also penalize if agent request more than physically possible
 
         requested_q= float(action[0])
         if requested_q > actual_discharge_m3s + 0.1:
-            reward-=10
+            reward-=10.0
 
 
         self.current_step+=1 # type: ignore
@@ -185,7 +190,8 @@ class HydroDispatchEnv(gym.Env):
             "evap_volume": evap_volume,
         })
 
-        return observation, reward, terminated, truncated, info
+        return observation, float(reward), terminated, truncated, info
+    #wrap the final output right at the boundary
 
 
     def _get_tariff(self, hour: int) -> float:
