@@ -17,3 +17,8 @@ To architect a physics-constrained Reinforcement Learning (RL) environment that 
 * **Neural Substrate:** `pytorch`
 * **Telemetry & Visualization:** `tensorboard`, `seaborn`
 
+## 🚦 Project Status: Phase 1 Complete (Suspended)
+**Phase 1: Environment Engineering** is structurally complete. The physics simulator (`HydroDispatchEnv`) is fully operational, mathematically verified against mass conservation constraints, and integrated with commercial Time-of-Day (ToD) tariff logic.
+
+The project is currently suspended. Forward development will resume with **Phase 2: Agent Training**, utilizing Proximal Policy Optimization (PPO) via `stable-baselines3` to converge on an autonomous dispatch policy.
+
