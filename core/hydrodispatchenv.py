@@ -34,9 +34,16 @@ class HydroDispatchEnv(gym.Env):
     }
 
 
-    def __init__(self, inflow_m3s: float=25.0): # constant for now
+    def __init__(self, inflow_data: np.ndarray=None, inflow_m3s = 25.0):
         super().__init__() # inherit all attributes from gym.env
-        self.inflow_m3s = inflow_m3s
+
+        if inflow_data is not None:
+            self.inflow_data = inflow_data.astype(np.float32)
+            self.use_historical=True
+        else:
+            self.inflow_data = None
+            self.use_historical = False
+            self.inflow_m3s = inflow_m3s
 
         self.action_space = spaces.Box(low = np.array([self.TURBINE_Q_MIN], dtype = np.float32), high = np.array([self.TURBINE_Q_MAX], dtype = np.float32), dtype = np.float32)
 
@@ -52,7 +59,7 @@ class HydroDispatchEnv(gym.Env):
         self.volume_m3 = None
         self.current_step= None
 
-    def reset(self, seed=None, options=None):
+    def reset(self, seed=None, options=None): # api contract, to main structure
         """
         reset env to start new episode
         """
@@ -65,6 +72,15 @@ class HydroDispatchEnv(gym.Env):
             init_frac = 0.5
 
         self.volume_m3 =  init_frac * self.RESERVOIR_MAX_M3
+
+        if self.use_historical:
+            max_start = len(self.inflow_data) - self.HOURS_PER_EPISODE #type: ignore
+            self.inflow_start_idx = self.np_random.integers(0, max(1, max_start))
+        else:
+            self.inflow_start_idx=0
+
+
+
         self.current_step = 0
 
         # defining private so agent doesn't 'reward hack'
@@ -82,7 +98,7 @@ class HydroDispatchEnv(gym.Env):
         level_norm = np.clip(level_norm, 0, 1)
         hour_of_day = (self.current_step % 24) /23.0 # type: ignore
 
-        inflow_norm = np.clip(self.inflow_m3s / self.TURBINE_Q_MAX, 0.0, 1.0)
+        inflow_norm = np.clip(self._get_current_inflow() / self.TURBINE_Q_MAX, 0.0, 1.0)
 
         tariff_norm = self._get_tariff_dynamic(self.current_step % 24) / self.TARIFF_SCHEDULE["peak"] # type:ignore
 
@@ -103,6 +119,15 @@ class HydroDispatchEnv(gym.Env):
 
         }
 
+    def _get_current_inflow(self) -> float:
+        """get inflow for current time step
+        """
+        if self.use_historical:
+            idx = self.inflow_start_idx + self.current_step #type: ignore
+            idx = min(idx, len(self.inflow_data) -1) #type: ignore
+            return float(self.inflow_data[idx]) #type: ignore
+        else:
+            return self.inflow_m3s
 
     # manually defining .step(action)
     def step(self, action):
@@ -113,7 +138,7 @@ class HydroDispatchEnv(gym.Env):
 
         discharge_m3s = np.clip(action[0], self.TURBINE_Q_MIN, self.TURBINE_Q_MAX)
 
-        inflow_vol = self.inflow_m3s * self.DT_SECONDS
+        inflow_vol = self._get_current_inflow() * self.DT_SECONDS # type: ignore
 
         available_volume =  self.volume_m3- self.RESERVOIR_MIN_M3 #type: ignore
 
